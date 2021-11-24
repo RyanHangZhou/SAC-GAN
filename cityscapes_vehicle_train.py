@@ -1,8 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-
-@author: Hang Zhou
-"""
 from __future__ import print_function
 
 
@@ -46,8 +42,8 @@ SEED = int(time.time())
 beta1 = 0.5
 nClass = 30
 
-results_path = '/local-scratch2/hang/SAC-GAN/results/aachen'
-checkpoint_path = '/local-scratch2/hang/SAC-GAN/checkpoints'
+results_path = 'results/aachen'
+checkpoint_path = 'checkpoints'
 
 
 random.seed(SEED)
@@ -69,10 +65,10 @@ BATCH_SIZE = 1
 EPOCHS = 100
 flag_aspect = 1 # keep ratio aspect (flag=1)
 
-object_image_path = '/local-scratch2/hang/SAC-GAN/data/aachen/object_image'
-object_mask_path = '/local-scratch2/hang/SAC-GAN/data/aachen/object_mask'
-background_image_path = '/local-scratch2/hang/SAC-GAN/data/aachen/background_image'
-semantic_label_path = '/local-scratch2/hang/SAC-GAN/data/aachen/semantic_label'
+object_image_path = 'data/aachen/object_image'
+object_mask_path = 'data/aachen/object_mask'
+background_image_path = 'data/aachen/background_image'
+semantic_label_path = 'data/aachen/semantic_label'
 
 image_num = len([lists for lists in os.listdir(semantic_label_path) if os.path.isfile(os.path.join(semantic_label_path, lists))])
 train_num = int(0.7*image_num)
