@@ -1,10 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-
-@author: Hang Zhou
-"""
 from __future__ import print_function
-
 
 import torch
 import torch.nn as nn
