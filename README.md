@@ -23,8 +23,8 @@ Train SAC-GAN on Cityscapes:
 ```
 python -u main.py \
     --phase train \
-       --dataset '/local-scratch2/hang/SAC-GAN/data/cityscapes' \
-       --result_dir '/local-scratch2/hang/SAC-Trans/results/cityscapes' \
+       --dataset YOUR_DATA_DIR \
+       --result_dir YOUR_RESULTS_DIR \
        --epoch 10 \
        --class_num 19 \
        --layout_flag True \
@@ -32,24 +32,17 @@ python -u main.py \
        --rec_weight 100 \
        --latent_rec_weight 0.05 \
        --affine_weight 1 \
-       --layout_weight 1 \
-       2>&1 | tee ./log_5_24_1.txt
+       --layout_weight 1
 ```
 
 Test
 ```
 python -u main.py \
     --phase test \
-       --dataset '/local-scratch2/hang/SAC-GAN/data/cityscapes' \
-       --result_dir '/local-scratch2/hang/SAC-Trans/results/cityscapes' \
-       --epoch 10 \
+       --dataset YOUR_DATA_DIR \
+       --result_dir YOUR_RESULTS_DIR \
        --class_num 19 \
-       --layout_flag False \
-       --save_freq 500  \
-       --rec_weight 100 \
-       --latent_rec_weight 0.05 \
-       --affine_weight 1 \
-       --layout_weight 1 
+       --layout_flag False
 ```
 
 License
