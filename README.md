@@ -21,8 +21,8 @@ Usage
 
 Train SAC-GAN on Cityscapes: 
 ```
-python -u main.py \
-    --phase train \
+python main.py \
+       --phase train \
        --dataset YOUR_DATA_DIR \
        --result_dir YOUR_RESULTS_DIR \
        --epoch 10 \
@@ -37,8 +37,8 @@ python -u main.py \
 
 Test
 ```
-python -u main.py \
-    --phase test \
+python main.py \
+       --phase test \
        --dataset YOUR_DATA_DIR \
        --result_dir YOUR_RESULTS_DIR \
        --class_num 19 \
