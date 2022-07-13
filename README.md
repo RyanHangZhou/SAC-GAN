@@ -25,6 +25,7 @@ Train SAC-GAN on Cityscapes:
 ```
 python main.py \
        --phase train \
+       --dataset_name 'cityscapes' \
        --dataset YOUR_DATA_DIR \
        --result_dir YOUR_RESULTS_DIR \
        --epoch 10 \
