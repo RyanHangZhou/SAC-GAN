@@ -6,6 +6,10 @@ Dependencies
 --
 Our code has been tested with Python 3.6, Pytorch 1.6.0, CUDA 10.1 and cuDNN 7.0 on Ubuntu 18.04.
 
+Install required dependencies, run
+```
+conda env create -f environment.yml
+```
 
 Datasets and Pre-trained weights
 --
