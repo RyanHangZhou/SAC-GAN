@@ -7,12 +7,12 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from skimage.transform import resize
 
-import dataset_cityscapes
-import dataset_chair
-import util
-from generator import *
-from discriminator import *
-from Canny import CannyEdgeDetector
+from dataset import dataset_cityscapes
+from dataset import dataset_chair
+from utils import util
+from network.generator import *
+from network.discriminator import *
+from network.Canny import CannyEdgeDetector
 
 class SAC_GAN(object):
     def __init__(self, args):

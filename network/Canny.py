@@ -9,7 +9,7 @@ Defines the Canny Edge Detector.
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import ndimage
-from util import convolve1d
+from utils.util import convolve1d
 
 
 class CannyEdgeDetector:

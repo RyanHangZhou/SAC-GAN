@@ -4,12 +4,12 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
 import os
-import util
+from utils import util
 
 from torchvision.utils import save_image
 from collections import namedtuple
 
-import ResNet
+from network import ResNet
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

@@ -9,7 +9,7 @@ import os
 from torchvision.utils import save_image
 from collections import namedtuple
 
-import ResNet
+from network import ResNet
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

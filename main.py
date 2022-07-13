@@ -1,6 +1,6 @@
-from SAC_GAN import *
+from network.SAC_GAN import *
 import argparse
-from util import *
+from utils.util import *
 
 """parsing and configuration"""
 
