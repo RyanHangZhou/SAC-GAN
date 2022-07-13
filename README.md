@@ -42,6 +42,7 @@ Test
 ```
 python main.py \
        --phase test \
+       --dataset_name 'cityscapes' \
        --dataset YOUR_DATA_DIR \
        --result_dir YOUR_RESULTS_DIR \
        --class_num 19 \
