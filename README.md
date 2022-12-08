@@ -1,6 +1,6 @@
 # SAC-GAN
 
-PyTorch implementation for paper "[SAC-GAN: Structure-Aware Image Composition](https://arxiv.org/abs/2112.06596)", Hang Zhou, [Rui Ma](https://ruim-jlu.github.io/), [Lingxiao Zhang](https://scholar.google.com/citations?user=Feu8yU0AAAAJ&hl=en), [Lin Gao](http://geometrylearning.com/lin/), [Ali Mahdavi-Amiri](https://www.sfu.ca/~amahdavi/Home.html), [Hao (Richard) Zhang](https://www.cs.sfu.ca/~haoz/).
+PyTorch implementation for paper "[SAC-GAN: Structure-Aware Image Composition](https://arxiv.org/abs/2112.06596)", Hang Zhou, [Rui Ma](https://ruim-jlu.github.io/), [Ling-Xiao Zhang](https://scholar.google.com/citations?user=Feu8yU0AAAAJ&hl=en), [Lin Gao](http://geometrylearning.com/lin/), [Ali Mahdavi-Amiri](https://www.sfu.ca/~amahdavi/Home.html), [Hao (Richard) Zhang](https://www.cs.sfu.ca/~haoz/).
 
 <img src='img/teaser.png' />
 
