@@ -16,6 +16,7 @@ conda env create -f environment.yml
 Datasets and Pre-trained weights
 --
 Our network is trained individually on Cityscapes (for vehicle/pedestrian/street light&sign composition), 3D-FUTURE & 3D-FRONT rendered images (for chair composition), and CelebAHQ (for glasses composition). 
+
 Pretrained model of vehicle composition: [GoogleDrive](https://drive.google.com/file/d/14YKpvc9hwfAFg75LdT9WPo8he8H4eagj/view?usp=share_link)
 
 
