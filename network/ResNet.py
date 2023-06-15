@@ -1,29 +1,10 @@
-from __future__ import print_function
-
-
+from collections import namedtuple
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-import torch.optim.lr_scheduler as lr_scheduler
-from torch.optim.lr_scheduler import _LRScheduler
-import torch.utils.data as data
-
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-import torchvision.models as models
-
-from sklearn import decomposition
-from sklearn import manifold
-from sklearn.metrics import confusion_matrix
-from sklearn.metrics import ConfusionMatrixDisplay
-import matplotlib.pyplot as plt
-import numpy as np
-
-from collections import namedtuple
 
 
 class ResNet(nn.Module):
+
     def __init__(self, config, input_dim, output_dim):
         super().__init__()
                 
@@ -48,7 +29,6 @@ class ResNet(nn.Module):
 
 
     def get_resnet_layer(self, block, n_blocks, channels, stride = 1):
-    
         layers = []
         
         if self.in_channels != block.expansion * channels:
@@ -67,7 +47,6 @@ class ResNet(nn.Module):
 
 
     def forward(self, x):
-        
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -83,6 +62,7 @@ class ResNet(nn.Module):
         x = self.fc(h)
         
         return x, h
+
 
 
 class BasicBlock(nn.Module):
@@ -173,7 +153,6 @@ class Bottleneck(nn.Module):
 
 
     def forward(self, x):
-        
         i = x
         
         x = self.conv1(x)
@@ -194,6 +173,14 @@ class Bottleneck(nn.Module):
         x = self.relu(x)
     
         return x
+
+
+def build(in_dim, out_dim):
+    ResNetConfig = namedtuple('ResNetConfig', ['block', 'n_blocks', 'channels'])
+    resnet34_config = ResNetConfig(block=BasicBlock, n_blocks=[3, 4, 6, 3], channels=[64, 128, 256, 512])
+    model = ResNet(resnet34_config, in_dim, out_dim)
+    return model
+
 
 
 ResNetConfig = namedtuple('ResNetConfig', ['block', 'n_blocks', 'channels'])

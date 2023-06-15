@@ -9,7 +9,6 @@ Defines the Canny Edge Detector.
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import ndimage
-from utils.util import convolve1d
 
 
 class CannyEdgeDetector:
@@ -42,6 +41,39 @@ class CannyEdgeDetector:
     self.I_hysteresis = None
 
 
+  def convolve1d(self, I, G, axis=0):
+    """
+    Perform a 1D convolution for image I with mask G along a specified axis.
+    :I: Input image.
+    :G: Convolution mask.
+    :axis: Axis for convoltion. 0 = Rows, 1 = Columns.
+    """
+
+    if (axis == 0):
+
+      result = np.ones(I.shape, dtype=I.dtype)
+
+      # Perform convolution in every row.
+      for row in range(I.shape[0]):
+        result[row, :] = np.convolve(I[row, :], G, mode='same')
+
+      return result
+      
+    elif (axis == 1):
+
+      result = np.ones(I.shape, dtype=I.dtype)
+
+      # Perform convolution in every column.
+      for col in range(I.shape[1]):
+        result[:, col] = np.convolve(I[:, col], G, mode='same')
+
+      return result
+
+    else:
+      print("Error: Invalid axis.")
+      return
+
+
   def gaussian_smoothing(self, I):
     """
     Perform 1-D Gaussian smoothing.
@@ -56,8 +88,8 @@ class CannyEdgeDetector:
           * (1 / (np.sqrt(2.0 * np.pi * (self.sigma ** 2.0))))) for x in r]
 
     # Convolve for both axes.
-    I_smooth_x = convolve1d(I, G, axis=0)
-    I_smooth_y = convolve1d(I, G, axis=1)
+    I_smooth_x = self.convolve1d(I, G, axis=0)
+    I_smooth_y = self.convolve1d(I, G, axis=1)
     
     # Combine both components.
     I_smooth = np.hypot(I_smooth_x, I_smooth_y).astype(int)
@@ -78,8 +110,8 @@ class CannyEdgeDetector:
       G = np.array([-1, 0, 1])
 
       # Compute the derivatives in both components.
-      I_prime_x = convolve1d(I_x, G, axis=0)
-      I_prime_y = convolve1d(I_y, G, axis=1)
+      I_prime_x = self.convolve1d(I_x, G, axis=0)
+      I_prime_y = self.convolve1d(I_y, G, axis=1)
 
     elif (self.dimension == 1):
 
@@ -208,41 +240,41 @@ class CannyEdgeDetector:
 
     # Perform Gaussian smoothing.
     self.I_smooth, self.I_smooth_x, self.I_smooth_y = self.gaussian_smoothing(self.I)
-    plt.imshow(self.I_smooth_x, cmap='gray')
-    plt.title('Image After Gaussian Smoothing (x)')
-    plt.show()
-    plt.imshow(self.I_smooth_y, cmap='gray')
-    plt.title('Image After Gaussian Smoothing (y)')
-    plt.show()
-    plt.imshow(self.I_smooth, cmap='gray')
-    plt.title('Image After Gaussian Smoothing')
-    plt.show()
+    # plt.imshow(self.I_smooth_x, cmap='gray')
+    # plt.title('Image After Gaussian Smoothing (x)')
+    # plt.show()
+    # plt.imshow(self.I_smooth_y, cmap='gray')
+    # plt.title('Image After Gaussian Smoothing (y)')
+    # plt.show()
+    # plt.imshow(self.I_smooth, cmap='gray')
+    # plt.title('Image After Gaussian Smoothing')
+    # plt.show()
 
     # Get the derivatives using a 1-D derivative mask.
     self.I_prime, self.I_prime_x, self.I_prime_y, self.I_theta = self.get_derivatives(self.I_smooth_x, self.I_smooth_y)
-    plt.imshow(self.I_prime_x, cmap='gray')
-    plt.title('Image After Derivative Mask (x)')
-    plt.show()
-    plt.imshow(self.I_prime_y, cmap='gray')
-    plt.title('Image After Derivative Mask (y)')
-    plt.show()
-    plt.imshow(self.I_prime, cmap='gray')
-    plt.title('Image After Derivative Mask')
-    plt.show()
-    plt.imshow(self.I_theta, cmap='magma')
-    plt.title('Image After Derivative Mask (Direction)')
-    plt.show()
+    # plt.imshow(self.I_prime_x, cmap='gray')
+    # plt.title('Image After Derivative Mask (x)')
+    # plt.show()
+    # plt.imshow(self.I_prime_y, cmap='gray')
+    # plt.title('Image After Derivative Mask (y)')
+    # plt.show()
+    # plt.imshow(self.I_prime, cmap='gray')
+    # plt.title('Image After Derivative Mask')
+    # plt.show()
+    # plt.imshow(self.I_theta, cmap='magma')
+    # plt.title('Image After Derivative Mask (Direction)')
+    # plt.show()
 
     # Perform non-maximum suppression.
     self.I_non_max = self.non_maximum_suppression(self.I_prime, self.I_theta)
-    plt.imshow(self.I_non_max, cmap='gray')
-    plt.title('Image After Non-Maximum Suppression')
-    plt.show()
+    # plt.imshow(self.I_non_max, cmap='gray')
+    # plt.title('Image After Non-Maximum Suppression')
+    # plt.show()
 
     # Perform hysteresis thresholding.
     self.I_hysteresis = self.hysteresis_threshold(self.I_non_max)
-    plt.imshow(self.I_hysteresis, cmap='gray')
-    plt.title('Image After Hysteresis Thresholding')
-    plt.show()
+    # plt.imshow(self.I_hysteresis, cmap='gray')
+    # plt.title('Image After Hysteresis Thresholding')
+    # plt.show()
 
     return self.I_hysteresis
