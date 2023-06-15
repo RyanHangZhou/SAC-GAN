@@ -1,96 +1,200 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 from torch.autograd import Variable
-import numpy as np
-import os
-from utils import util
+from utils import misc
 
-from torchvision.utils import save_image
-from collections import namedtuple
+class SACGAN(nn.Module):
 
-from network import ResNet
+    def __init__(
+        self,
+        e_trans,
+        e_patch, 
+        e_layout, 
+        d_trans,
+        d_layout,
+        args, 
+        ):
+        super().__init__()
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.target_class = args.target_class
+        self.patch_s = args.patch_s
+        self.img_h = args.img_h
+        self.img_w = args.img_w
+        self.class_num = args.class_num
+        self.layout_dim = args.layout_dim
+        self.object_dim = args.object_dim
+        self.device = args.device
 
-sem_len = 128
-obj_len = 30
-nClass = 19 # 30
+        if self.target_class == 'car':
+            self.target_label = 13
+        elif self.target_class == 'truck':
+            self.target_label = 14
+        elif self.target_class == 'bus':
+            self.target_label = 15
+        elif self.target_class == 'person':
+            self.target_label = 11
 
-class STNet(nn.Module):
-    def __init__(self):
-        super(STNet, self).__init__()
+        """ Networks """
+        self.e_trans = e_trans
+        self.e_patch = e_patch
+        self.e_layout = e_layout
+        self.d_trans = d_trans
+        self.d_layout = d_layout
 
-        # Regressor for the 3 * 2 affine matrix
         self.fc_loc = nn.Sequential(
-            nn.Linear(sem_len+obj_len, 32),
+            nn.Linear(self.layout_dim + self.object_dim, 32),
             nn.ReLU(True),
             nn.Linear(32, 5)
         )
+        self.rotFix = Variable(torch.from_numpy(np.array([1., 0., 1., 0., 1.])).float()).to(self.device)
 
-        # initialize the weights/bias with identity transformation
+        """ Init """
         self.fc_loc[2].weight.data.zero_()
         self.fc_loc[2].bias.data.copy_(torch.tensor([1, 0, 0, 0, 0], dtype=torch.float))
 
-        ResNetConfig = namedtuple('ResNetConfig', ['block', 'n_blocks', 'channels'])
-        resnet_model = Where_Encoder()
-        layout_decoder = Layout_Reconstructor()
-        object_decoder = Object_Reconstructor()
-        self.resnet_model = resnet_model.to(device)
-        self.layout_decoder = layout_decoder.to(device)
-        self.object_decoder = object_decoder.to(device)
+        """ Define Loss """
+        self.BCELoss = nn.BCELoss().to(self.device)
 
-        resnet18_config_mask = ResNetConfig(block = ResNet.BasicBlock, 
-            n_blocks = [2, 2, 2, 2], channels = [16, 32, 64, 128])
-        resnet34_config_mask = ResNetConfig(block = ResNet.BasicBlock,
-            n_blocks = [3, 4, 6, 3], channels = [64, 128, 256, 512])
-        resnet50_config_mask = ResNetConfig(block = ResNet.Bottleneck,
-            n_blocks = [3, 4, 6, 3], channels = [64, 128, 256, 512])
-        resnet101_config = ResNetConfig(block = ResNet.Bottleneck,
-            n_blocks = [3, 4, 23, 3], channels = [64, 128, 256, 512])
-        resnet_model_mask = ResNet.ResNet(resnet34_config_mask, 2, obj_len)
-        self.resnet_model_mask = resnet_model_mask.to(device)
 
-        # Rotation fixed
-        self.rotFix = Variable(torch.from_numpy(np.array([1., 0., 1., 0., 1.])).float()).cuda()
+    def forward(self, target): 
+        theta_gt    = target['theta_gt'].to(self.device)
+        layout      = target['layout'].to(self.device)
+        cond_layout = target['cond_layout'].to(self.device)
+        object_mask = target['object_mask'].to(self.device)
+        obj         = target['norm_mask'].to(self.device)
+        edge        = target['object_edge'].to(self.device)
 
-    def localization(self, sem_img, obj_mask):
-        feat_sem, z_dec = self.resnet_model(sem_img) # basically an encoder network (HXWX3->90X1)
-        layout_dec = self.layout_decoder(feat_sem)
-        feat_sem = feat_sem.view(-1, sem_len)
-        feat_obj, _ = self.resnet_model_mask(obj_mask)
-        feat_obj_ = torch.unsqueeze(feat_obj, 2)
-        feat_obj_ = torch.unsqueeze(feat_obj_, 2)
-        object_dec = self.object_decoder(feat_obj_)
-        feat_obj = feat_obj.view(-1, obj_len)
-        feat = torch.cat((feat_sem, feat_obj), -1)
+        """ 1. reconstruct theta from theta_gt """
+        z_mu, z_logvar = self.e_trans(theta_gt)
+        z_reparam = self.re_param(z_mu, z_logvar, mode='train')
+        theta_rec = self.stn(z_reparam, layout, obj, edge)[0]
 
-        theta = self.fc_loc(feat) # still an encoder network (90X1->6X1)
-        
-        theta = theta * self.rotFix # fix rotation
-        theta = torch.cat((theta[:, 0:4], torch.unsqueeze(theta[:, 0],0), torch.unsqueeze(theta[:, 4],0)), 1)
-        theta = theta.view(-1, 2, 3) # reshape (6X1->2X3)
+        b = target['layout'].shape[0]
+        z = torch.FloatTensor(b, 4, 1, 1).normal_(0, 1)
+        z = Variable(z).to(self.device)
 
-        return theta, z_dec, layout_dec, object_dec
+        """ 2. generate theta from z """
+        theta_gen, object_mask_gen = self.stn(z, layout, obj, edge)
+        cond_theta_gen, con_obj_mask_gen = self.stn(z, cond_layout, obj, edge)
 
-    # Spatial transformer network forward function
-    def stn(self, sem_img, obj_mask, edge_obj, results_path, indx):
-        theta, z_dec, layout_dec, object_dec = self.localization(sem_img, torch.cat([obj_mask, edge_obj], 1))
+        # obtain layout
+        layout_gt = layout * (1. - object_mask) + self.pad_to_nclass(object_mask)
+        layout_gen = layout * (1. - object_mask_gen) + self.pad_to_nclass(object_mask_gen)
+        layout_ref_gen = cond_layout * (1. - con_obj_mask_gen) + self.pad_to_nclass(con_obj_mask_gen)
 
-        h_img, w_img = sem_img.size()[2], sem_img.size()[3]
-        h_obj, w_obj = obj_mask.size()[2], obj_mask.size()[3]
+        """ 3. reconstruction loss """
+        kl_loss = torch.mean(-0.5 * torch.sum(1 + z_logvar - z_mu ** 2 - z_logvar.exp(), dim = 1), dim = 0)
+        theta_rec_loss = torch.mean(torch.abs(theta_rec - theta_gt))
+        rec_loss = theta_rec_loss + 0.01*kl_loss
+    
+        """ 4. GAN loss """
+        # T discriminator
+        d_theta_gt = self.d_trans(theta_gt)
+        d_theta_rec = self.d_trans(theta_rec)
+        d_theta_gen = self.d_trans(theta_gen)
+        d_theta_gen_ref = self.d_trans(cond_theta_gen)
+
+        # T loss
+        true_tensor = Variable(torch.FloatTensor(d_theta_gt.data.size()).fill_(1.)).to(self.device)
+        fake_tensor = Variable(torch.FloatTensor(d_theta_gt.data.size()).fill_(0.)).to(self.device)
+        d_t_loss = self.BCELoss(d_theta_gt, true_tensor) + self.BCELoss(d_theta_rec, fake_tensor) + \
+                     self.BCELoss(d_theta_gen, fake_tensor) + self.BCELoss(d_theta_gen_ref, fake_tensor)
+        g_t_loss = self.BCELoss(d_theta_rec, true_tensor) + self.BCELoss(d_theta_gen, true_tensor) + self.BCELoss(d_theta_gen_ref, true_tensor)
+
+        # layout discriminator
+        d_layout_gt = self.d_layout(layout_gt, object_mask)
+        d_layout_gen = self.d_layout(layout_gen, object_mask_gen)
+        d_layout_ref_gen = self.d_layout(layout_ref_gen, con_obj_mask_gen)
+
+        # layout loss
+        true_tensor = Variable(torch.FloatTensor(d_layout_gt.data.size()).fill_(1.)).to(self.device)
+        fake_tensor = Variable(torch.FloatTensor(d_layout_gt.data.size()).fill_(0.)).to(self.device)
+        d_layout_loss = self.BCELoss(d_layout_gt, true_tensor) + self.BCELoss(d_layout_gen, fake_tensor) + self.BCELoss(d_layout_ref_gen, fake_tensor)
+        g_layout_loss = self.BCELoss(d_layout_gen, true_tensor) + self.BCELoss(d_layout_ref_gen, true_tensor)
+
+        loss = {}
+        loss["rec_loss"] = rec_loss
+        loss["d_t_loss"] = d_t_loss
+        loss["g_t_loss"] = g_t_loss
+        loss["d_layout_loss"] = d_layout_loss
+        loss["g_layout_loss"] = g_layout_loss
+
+        return loss
+
+
+    def re_param(self, mu, logvar, mode): 
+        if mode == 'train':
+            std = logvar.mul(0.5).exp_()
+            eps = torch.randn_like(std)
+            return eps.mul(std).add_(mu)
+        else:
+            return mu
+
+
+    def stn(self, z, layout, obj, edge):
+        # predict theta (bX2X3)
+        theta = self.localize(z, layout, obj, edge)
+
+        h_img, w_img = layout.size()[2:]
+        h_obj, w_obj = obj.size()[2:]
 
         padded = nn.ZeroPad2d((int((w_img-w_obj)/2), w_img-w_obj-int((w_img-w_obj)/2), int((h_img-h_obj)/2), h_img-h_obj-int((h_img-h_obj)/2)))
-        obj_mask = padded(obj_mask)
+        obj = padded(obj)
 
-        grid = F.affine_grid(theta, obj_mask.size(), align_corners=True) # Generates a 2D flow field (sampling grid), given a batch of affine matrices theta
-        obj_mask = F.grid_sample(obj_mask, grid, align_corners=True)
+        grid = F.affine_grid(theta, obj.size(), align_corners=True) # generate a 2D flow field (sampling grid), given a batch of affine matrices theta
+        obj = F.grid_sample(obj, grid, align_corners=True)
 
-        return theta, obj_mask, grid, z_dec, layout_dec, object_dec
+        return theta, obj
 
-    def object_compose(self, obj, mask, theta, image, directory_name, results_path, indx, is_train=False):
-        h_img, w_img = image.size()[2], image.size()[3]
-        h_obj, w_obj = obj.size()[2], obj.size()[3]
+
+    def localize(self, z, layout, obj_mask, edge_obj):
+        b = layout.shape[0]
+
+        # prepare network inputs
+        z = z.expand([b, -1, self.img_h, self.img_w])
+        layout_z = torch.cat([layout, z], 1)
+        mask_edge = torch.cat([obj_mask, edge_obj], 1)
+
+        # encode inputs
+        layout_code = self.e_layout(layout_z)[0]
+        layout_code = layout_code.view(-1, self.layout_dim)
+        object_code = self.e_patch(mask_edge)[0].view(-1, self.object_dim)
+        code = torch.cat((layout_code, object_code), -1)
+
+        # predict theta
+        theta = self.fc_loc(code).view(b, -1)
+
+        # shuffle theta into 2X3 2D matrices
+        rotFix = torch.unsqueeze(self.rotFix, 0).repeat(b, 1)
+        theta = theta * rotFix
+        theta = torch.cat((theta[:, 0:4], torch.unsqueeze(theta[:, 0], 1), torch.unsqueeze(theta[:, 4], 1)), 1)
+        theta = theta.view(-1, 2, 3)
+
+        return theta
+
+
+    def pad_to_nclass(self, x):
+        b = x.shape[0]
+        pad_small = Variable(torch.zeros(b, self.class_num - 1, self.img_h, self.img_w)).to(self.device)
+        pad_before_small = Variable(torch.zeros(b, self.target_label, self.img_h, self.img_w)).to(self.device)
+        pad_after_small = Variable(torch.zeros(b, self.class_num - self.target_label - 1, self.img_h, self.img_w)).to(self.device)
+
+        if self.target_label == 0:
+            padded = torch.cat((x, pad_small), 1)
+        elif self.target_label == (self.class_num - 1):
+            padded = torch.cat((pad_small, x), 1)
+        else:
+            padded = torch.cat((pad_before_small, x, pad_after_small), 1)
+
+        return padded
+
+
+    def compose(self, obj, mask, theta, image, folder_name, result_dir, indx):
+        h_img, w_img = image.size()[2:]
+        h_obj, w_obj = obj.size()[2:]
 
         padded = nn.ZeroPad2d((int((w_img-w_obj)/2), w_img-w_obj-int((w_img-w_obj)/2), int((h_img-h_obj)/2), h_img-h_obj-int((h_img-h_obj)/2)))
         obj = padded(obj).to(dtype=torch.float64)
@@ -100,256 +204,38 @@ class STNet(nn.Module):
         obj = F.grid_sample(obj, grid, align_corners=True)
         mask = F.grid_sample(mask, grid, align_corners=True)
 
-        composed_img = self.compose(obj, mask, image)
+        composed_img = mask * obj+(1-mask)*image
 
-        for i in range(len(indx)):
-            if is_train:
-                util.save_img(obj[0], results_path, 'train_obj', indx)
-                util.save_img(mask[0], results_path, 'train_mask', indx)
-                util.save_img(composed_img[0], results_path, 'train_composed'+directory_name, indx)
-            else:
-                util.save_img(obj[0], results_path, 'test_obj', indx)
-                util.save_img(mask[0], results_path, 'test_mask', indx)
-                util.save_img(composed_img[0], results_path, 'test_composed'+directory_name, indx)
-
-            # save_image(obj[i], os.path.join(results_path, 'obj'+indx[i]))
-            # save_image(mask[i], os.path.join(results_path, 'mask'+indx[i]))
-            # save_image(composed_img[i], os.path.join(results_path, 'composed'+indx[i]))
-
-    
-    def compose(self, obj, mask, background): 
-        # composed_img = mask * obj+(1-mask)*background
-        # print(torch.max(mask))
-        # print(torch.max(obj))
-        # print(torch.max(background))
-        # sss
-        mask = mask/255.
-        composed_img = mask * obj+(1-mask)*background
-        return composed_img
-
-    def forward(self, sem_img, obj_mask, edge_obj, results_path, indx):
-        # transform the input
-        theta, obj_mask, grid, z_dec, layout_dec, object_dec = self.stn(sem_img, obj_mask, edge_obj, results_path, indx)
-        # composed_img = self.compose(obj, mask, background)
-
-        return theta, grid, obj_mask, z_dec, layout_dec, object_dec
-
-# T encoder
-class TEncoderNet(nn.Module):
-    def __init__(self):
-        super(TEncoderNet, self).__init__()
-
-        f_dim = 32
-        self.conv0 = nn.Sequential(
-            nn.Conv2d(6, f_dim,
-                      kernel_size=1, stride=1, padding=0),
-            nn.LeakyReLU(0.2),
-        )
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(f_dim, f_dim,
-                      kernel_size=1, stride=1, padding=0),
-            nn.LeakyReLU(0.2),
-        )
-        self.fc_mu = nn.Sequential(
-            nn.Conv2d(f_dim, 4,
-                      kernel_size=1, stride=1, padding=0),
-        )
-        self.fc_logvar = nn.Sequential(
-            nn.Conv2d(f_dim, 4,
-                      kernel_size=1, stride=1, padding=0),
-        )
-
-    def forward(self, x):
-        e0 = self.conv0(x.reshape([-1, 6, 1, 1]))
-        mu = self.fc_mu(e0)
-        logvar = self.fc_logvar(e0)
-
-        return mu, logvar
+        misc.save_img(obj[0], result_dir, 'test/object_image', indx)
+        misc.save_img(mask[0], result_dir, 'test/mask_image', indx)
+        misc.save_img(composed_img[0], result_dir, 'test/image', indx)
 
 
-class Where_Encoder(nn.Module):
-    def __init__(self):
-        super(Where_Encoder, self).__init__()
+    def inference(self, target, result_dir):
+        background_image = target['background_image'].to(self.device)
+        layout           = target['layout'].to(self.device)
+        object_mask      = target['object_mask'].to(self.device)
+        patch_obj        = target['patch_obj'].to(self.device)
+        patch_mask        = target['patch_mask'].to(self.device)
+        obj              = target['norm_mask'].to(self.device)
+        edge             = target['object_edge'].to(self.device)
+        sample           = target['sample']
 
-        f_dim = 32
-        self.conv0 = nn.Sequential(
-            nn.Conv2d(nClass + 4, f_dim,
-                      kernel_size=4, stride=2, padding=1),
-            nn.LeakyReLU(0.2),
-        )
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(f_dim, f_dim * 2,
-                      kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(f_dim * 2, affine=False),
-            nn.LeakyReLU(0.2),
-        )
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(f_dim * 2, f_dim * 4,
-                      kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(f_dim * 4, affine=False),
-            nn.LeakyReLU(0.2),
-        )
-        self.conv3 = nn.Sequential(
-            nn.Conv2d(f_dim * 4, f_dim * 8,
-                      kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(f_dim * 8, affine=False),
-            nn.LeakyReLU(0.2),
-        )
-        self.conv4 = nn.Sequential(
-            nn.Conv2d(f_dim * 8, f_dim * 8,
-                      kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(f_dim * 8, affine=False),
-            nn.LeakyReLU(0.2),
-        )
-        self.conv5 = nn.Sequential(
-            nn.Conv2d(f_dim * 8, f_dim * 16,
-                      kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(sem_len, affine=False),
-            nn.LeakyReLU(0.2),
-        )
-        self.conv6 = nn.Sequential(
-            nn.Conv2d(f_dim * 16, f_dim * 32,
-                      kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(sem_len, affine=False),
-            nn.LeakyReLU(0.2),
-        )
-        self.conv7 = nn.Sequential(
-            nn.Conv2d(f_dim * 32, sem_len,
-                      kernel_size=(4, 7), stride=1, padding=0),
-        )
-        self.reconz = nn.Sequential(
-            nn.Dropout2d(p=0.4),
-            nn.Conv2d(sem_len, 4,
-                      kernel_size=1, stride=1, padding=0),
-        )
+        """ 1. z -> T_gen """
+        b = target['layout'].shape[0]
+        z = torch.FloatTensor(b, 4, 1, 1).normal_(0, 1)
+        z = Variable(z).to(self.device)
+        theta_gen, object_mask_gen = self.stn(z, layout, obj, edge)
 
-    def forward(self, x):
-        e0 = self.conv0(x)
-        e1 = self.conv1(e0)
-        e2 = self.conv2(e1)
-        e3 = self.conv3(e2)
-        e4 = self.conv4(e3)
-        e5 = self.conv5(e4)
-        e6 = self.conv6(e5)
-        y = self.conv7(e6)
-        z = self.reconz(y)
+        """ 2. Object composition """
+        local_h, local_w = patch_obj.shape[2:]
+        theta_gen[0, 0, 0] = theta_gen[0, 0, 0] * (local_w/self.patch_s)
+        theta_gen[0, 1, 1] = theta_gen[0, 1, 1] * (local_h/self.patch_s)
+        theta_gen[0, 0, 2] = theta_gen[0, 0, 2] * (local_w/self.patch_s)
+        theta_gen[0, 1, 2] = theta_gen[0, 1, 2] * (local_h/self.patch_s)
 
-        return y, z
-
-class Layout_Reconstructor(nn.Module):
-    def __init__(self):
-        super(Layout_Reconstructor, self).__init__()
-
-        f_dim = 8
-        self.convT0 = nn.Sequential(
-            nn.ConvTranspose2d(sem_len, f_dim * 8,
-                               kernel_size=(4, 7), stride=1, padding=0),
-            nn.InstanceNorm2d(f_dim * 8, affine=False),
-            nn.ReLU(),
-        )
-        self.convT1 = nn.Sequential(
-            nn.ConvTranspose2d(f_dim * 8, f_dim * 8,
-                               kernel_size=4, stride=2, padding=1, output_padding=(0,1)),
-            nn.InstanceNorm2d(f_dim * 8, affine=False),
-            nn.ReLU(),
-        )
-        self.convT2 = nn.Sequential(
-            nn.ConvTranspose2d(f_dim * 8, f_dim * 4,
-                               kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(f_dim * 4, affine=False),
-            nn.ReLU(),
-        )
-        self.convT3 = nn.Sequential(
-            nn.ConvTranspose2d(f_dim * 4, f_dim * 2,
-                               kernel_size=4, stride=2, padding=1, output_padding=(1,0)),
-            nn.InstanceNorm2d(f_dim * 2, affine=False),
-            nn.ReLU(),
-        )
-        self.convT4 = nn.Sequential(
-            nn.ConvTranspose2d(f_dim * 2, f_dim * 1,
-                               kernel_size=4, stride=2, padding=1, output_padding=(1,0)),
-            nn.InstanceNorm2d(f_dim * 1, affine=False),
-            nn.ReLU(),
-        )
-        self.convT5 = nn.Sequential(
-            nn.ConvTranspose2d(f_dim * 1, f_dim * 1,
-                               kernel_size=4, stride=2, padding=1, output_padding=(1,0)),
-            nn.InstanceNorm2d(f_dim * 1, affine=False),
-            nn.ReLU(),
-        )
-        self.convT6 = nn.Sequential(
-            nn.ConvTranspose2d(f_dim * 1, f_dim * 1,
-                               kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(f_dim * 1, affine=False),
-            nn.ReLU(),
-        )
-        self.convT7 = nn.Sequential(
-            nn.ConvTranspose2d(f_dim * 1, nClass,
-                               kernel_size=4, stride=2, padding=1),
-            nn.Sigmoid(),
-        )
-
-    def forward(self, em):
-        m0 = self.convT0(em)
-        m1 = self.convT1(m0)
-        m2 = self.convT2(m1)
-        m3 = self.convT3(m2)
-        m4 = self.convT4(m3)
-        m5 = self.convT5(m4)
-        m6 = self.convT6(m5)
-        mask = self.convT7(m6)
-
-        return mask
-
-class Object_Reconstructor(nn.Module): 
-    def __init__(self):
-        super(Object_Reconstructor, self).__init__()
-
-        f_dim = 8
-        self.convT0 = nn.Sequential(
-            nn.ConvTranspose2d(obj_len, f_dim * 8,
-                               kernel_size=4, stride=1, padding=0),
-            nn.InstanceNorm2d(f_dim * 8, affine=False),
-            nn.ReLU(),
-        )
-        self.convT1 = nn.Sequential(
-            nn.ConvTranspose2d(f_dim * 8, f_dim * 4,
-                               kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(f_dim * 8, affine=False),
-            nn.ReLU(),
-        )
-        self.convT2 = nn.Sequential(
-            nn.ConvTranspose2d(f_dim * 4, f_dim * 2,
-                               kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(f_dim * 4, affine=False),
-            nn.ReLU(),
-        )
-        self.convT3 = nn.Sequential(
-            nn.ConvTranspose2d(f_dim * 2, f_dim * 1,
-                               kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(f_dim * 2, affine=False),
-            nn.ReLU(),
-        )
-        # self.convT4 = nn.Sequential(
-        #     nn.ConvTranspose2d(f_dim * 2, f_dim * 1,
-        #                        kernel_size=4, stride=2, padding=1),
-        #     nn.InstanceNorm2d(f_dim * 1, affine=False),
-        #     nn.ReLU(),
-        # )
-        self.convT7 = nn.Sequential(
-            nn.ConvTranspose2d(f_dim * 1, 2,
-                               kernel_size=4, stride=2, padding=1),
-            nn.Sigmoid(),
-        )
-
-    def forward(self, em):
-        m0 = self.convT0(em)
-        m1 = self.convT1(m0)
-        m2 = self.convT2(m1)
-        m3 = self.convT3(m2)
-        # m4 = self.convT4(m3)
-        mask = self.convT7(m3)
-
-        return mask
-
+        self.compose(patch_obj, patch_mask, theta_gen, background_image, 'test/image', result_dir, sample[0])
+        misc.save_layout(layout, result_dir, 'test/GT_layout', sample[0])
+        layout_gen = layout * (1. - object_mask_gen) + self.pad_to_nclass(object_mask_gen)
+        misc.save_layout(layout_gen, result_dir, 'test/layout', sample[0])
 
